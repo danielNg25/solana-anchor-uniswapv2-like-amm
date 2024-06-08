@@ -52,4 +52,20 @@ pub mod amm {
     ) -> Result<()> {
         instructions::remove_liquidity(ctx, liquidity, amount0_min, amount1_min)
     }
+
+    pub fn swap_exact_input(
+        ctx: Context<Swap>,
+        input_amount: u64,
+        min_output_amount: u64,
+    ) -> Result<()> {
+        instructions::swap_exact_input(ctx, input_amount, min_output_amount)
+    }
+
+    pub fn swap_exact_output(
+        ctx: Context<Swap>,
+        output_amount: u64,
+        max_input_amount: u64,
+    ) -> Result<()> {
+        instructions::swap_exact_output(ctx, output_amount, max_input_amount)
+    }
 }

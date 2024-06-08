@@ -20,6 +20,6 @@ pub enum ErrorCode {
     InsufficientInputAmount,
     #[msg("InvalidLiquidity")]
     InsufficientLiquidity,
-    #[msg("InvalidUserBalance")]
-    InvalidUserBalance,
+    #[msg("InsufficientUserBalance")]
+    InsufficientUserBalance,
 }

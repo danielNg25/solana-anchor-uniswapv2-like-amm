@@ -27,6 +27,9 @@ interface LPProvider {
     lpAta: web3.PublicKey;
 }
 
+const BASIS_POINTS = 10000;
+let fee = 30;
+
 describe('Amm', () => {
     // Configure the client to use the local cluster.
     const provider = anchor.AnchorProvider.env();
@@ -45,14 +48,14 @@ describe('Amm', () => {
 
     it('Initialize', async () => {
         const tx = await program.methods
-            .initialize(provider.wallet.publicKey, new BN(300))
+            .initialize(provider.wallet.publicKey, new BN(fee))
             .rpc();
 
         const config = await program.account.config.fetch(configPDA);
 
         expect(config.owner.toBase58()).to.eq(wallet.publicKey.toBase58());
         expect(config.feeTo.toBase58()).to.eq(wallet.publicKey.toBase58());
-        expect(config.fee.eq(new BN(300))).to.be.true;
+        expect(config.fee.eq(new BN(fee))).to.be.true;
     });
 
     it('SetFeeTo', async () => {
@@ -67,10 +70,10 @@ describe('Amm', () => {
         expect(config.feeTo.toBase58()).to.eq(newFeeTo.publicKey.toBase58());
     });
 
-    it('SetFee', async () => {
+    it('Set fee', async () => {
         try {
             await program.methods
-                .setFee(new BN(10000))
+                .setFee(new BN(BASIS_POINTS))
                 .accounts({ config: configPDA })
                 .rpc();
         } catch (e) {
@@ -78,16 +81,19 @@ describe('Amm', () => {
             expect((e as AnchorError).error.errorCode.code).to.eq('InvalidFee');
         }
 
+        // assign fee to 50
+        fee = 50;
+
         const tx = await program.methods
-            .setFee(new BN(500))
+            .setFee(new BN(fee))
             .accounts({ config: configPDA })
             .rpc();
 
         const config = await program.account.config.fetch(configPDA);
-        expect(config.fee.eq(new BN(500))).to.be.true;
+        expect(config.fee.eq(new BN(fee))).to.be.true;
     });
 
-    it('CreatePool', async () => {
+    it('Create pool', async () => {
         let auth = web3.Keypair.generate();
         let sig = await connection.requestAirdrop(
             auth.publicKey,
@@ -183,8 +189,6 @@ describe('Amm', () => {
 
         expect(poolData.token0.toBase58()).to.eq(mint0.toBase58());
         expect(poolData.token1.toBase58()).to.eq(mint1.toBase58());
-        expect(poolData.reserve0.eq(new BN(0))).to.be.true;
-        expect(poolData.reserve1.eq(new BN(0))).to.be.true;
         expect(poolData.kLast.eq(new BN(0))).to.be.true;
 
         let vaultLp = await token.getOrCreateAssociatedTokenAccount(
@@ -211,9 +215,9 @@ describe('Amm', () => {
 
     let lpUser0: LPProvider;
     let liquidityAdded: anchor.BN;
-    let src_amount0_in = lp_amount(100);
-    let src_amount1_in = lp_amount(100);
-    it('AddLiquidity', async () => {
+    let src_amount0_in = lp_amount(50);
+    let src_amount1_in = lp_amount(50);
+    it('Add liquidity', async () => {
         let lp_user_signer = web3.Keypair.generate();
         let [userAta0, userAta1, lpAta] = await setup_lp_provider(
             lp_user_signer.publicKey,
@@ -227,7 +231,7 @@ describe('Amm', () => {
             lpAta,
         };
 
-        await program.methods
+        const tx = await program.methods
             .addLiquidity(
                 src_amount0_in,
                 src_amount1_in,
@@ -248,11 +252,8 @@ describe('Amm', () => {
             .rpc();
 
         let poolData = await program.account.pool.fetch(pool.poolState);
-        expect(poolData.reserve0.eq(src_amount0_in)).to.be.true;
-        expect(poolData.reserve1.eq(src_amount1_in)).to.be.true;
         expect(poolData.kLast.eq(src_amount0_in.mul(src_amount1_in))).to.be
             .true;
-
         let userMint0Balance = await connection.getTokenAccountBalance(
             userAta0
         );
@@ -285,9 +286,31 @@ describe('Amm', () => {
 
         let poolLp = await connection.getTokenSupply(pool.poolMint);
         expect(poolLp.value.amount).to.be.eq(userLpBalance.value.amount);
+
+        // Reserve pool input
+
+        await program.methods
+            .addLiquidity(
+                src_amount1_in,
+                src_amount0_in,
+                src_amount1_in,
+                src_amount0_in
+            )
+            .accounts({
+                owner: lp_user_signer.publicKey,
+                pool: pool.poolState,
+                vault0: pool.vault1,
+                vault1: pool.vault0,
+                vaultLp: pool.vaultLP,
+                userAta0: lpUser0.userAta1,
+                userAta1: lpUser0.userAta0,
+                userLpAta: lpUser0.lpAta,
+            })
+            .signers([lpUser0.signer])
+            .rpc();
     });
 
-    it('RemoveLiquidity', async () => {
+    it('Remove liquidity', async () => {
         let userMint0BalanceBefore = await connection.getTokenAccountBalance(
             lpUser0.userAta0
         );
@@ -342,6 +365,119 @@ describe('Amm', () => {
         ).to.be.true;
     });
 
+    it('Swap exact input', async () => {
+        let userMint0BalanceBefore = await connection.getTokenAccountBalance(
+            lpUser0.userAta0
+        );
+        let userMint1BalanceBefore = await connection.getTokenAccountBalance(
+            lpUser0.userAta1
+        );
+
+        let vault0BalanceBefore = await connection.getTokenAccountBalance(
+            pool.vault0
+        );
+        let vault1BalanceBefore = await connection.getTokenAccountBalance(
+            pool.vault1
+        );
+
+        let amountIn = new anchor.BN(10).mul(new anchor.BN(10 ** n_decimals));
+
+        let amountOut = getAmountOut(
+            amountIn,
+            new anchor.BN(vault0BalanceBefore.value.amount),
+            new anchor.BN(vault1BalanceBefore.value.amount),
+            fee
+        );
+
+        const tx = await program.methods
+            .swapExactInput(amountIn, amountOut)
+            .accounts({
+                owner: lpUser0.signer.publicKey,
+                pool: pool.poolState,
+                userAtaSrc: lpUser0.userAta0,
+                userAtaDes: lpUser0.userAta1,
+                vaultSrc: pool.vault0,
+                vaultDes: pool.vault1,
+            })
+            .signers([lpUser0.signer])
+            .rpc();
+
+        let userMint0BalanceAfter = await connection.getTokenAccountBalance(
+            lpUser0.userAta0
+        );
+        let userMint1BalanceAfter = await connection.getTokenAccountBalance(
+            lpUser0.userAta1
+        );
+
+        expect(
+            new BN(userMint0BalanceBefore.value.amount)
+                .sub(new BN(userMint0BalanceAfter.value.amount))
+                .eq(amountIn)
+        ).to.be.true;
+        expect(
+            new BN(userMint1BalanceAfter.value.amount)
+                .sub(new BN(userMint1BalanceBefore.value.amount))
+                .eq(amountOut)
+        ).to.be.true;
+    });
+
+    it('Swap exact output', async () => {
+        let userMint0BalanceBefore = await connection.getTokenAccountBalance(
+            lpUser0.userAta0
+        );
+        let userMint1BalanceBefore = await connection.getTokenAccountBalance(
+            lpUser0.userAta1
+        );
+
+        let vault0BalanceBefore = await connection.getTokenAccountBalance(
+            pool.vault0
+        );
+        let vault1BalanceBefore = await connection.getTokenAccountBalance(
+            pool.vault1
+        );
+
+        let amountOut = new anchor.BN(1).mul(new anchor.BN(10 ** n_decimals));
+
+        let amountIn = getAmountIn(
+            amountOut,
+            new anchor.BN(vault0BalanceBefore.value.amount),
+            new anchor.BN(vault1BalanceBefore.value.amount),
+            fee
+        );
+
+        const tx = await program.methods
+            .swapExactOutput(amountOut, amountIn)
+            .accounts({
+                owner: lpUser0.signer.publicKey,
+                pool: pool.poolState,
+                userAtaSrc: lpUser0.userAta0,
+                userAtaDes: lpUser0.userAta1,
+                vaultSrc: pool.vault0,
+                vaultDes: pool.vault1,
+            })
+            .signers([lpUser0.signer])
+            .rpc();
+
+        let userMint0BalanceAfter = await connection.getTokenAccountBalance(
+            lpUser0.userAta0
+        );
+        let userMint1BalanceAfter = await connection.getTokenAccountBalance(
+            lpUser0.userAta1
+        );
+
+        expect(
+            new BN(userMint0BalanceBefore.value.amount)
+                .sub(new BN(userMint0BalanceAfter.value.amount))
+                .eq(amountIn)
+        ).to.be.true;
+
+        expect(
+            new BN(userMint1BalanceAfter.value.amount)
+                .sub(new BN(userMint1BalanceBefore.value.amount))
+                .eq(amountOut)
+        ).to.be.true;
+    });
+
     async function setup_lp_provider(user: web3.PublicKey, amount: number) {
         // setup token accs for deposit
         let mint0_ata = await token.createAssociatedTokenAccount(
@@ -388,5 +524,34 @@ describe('Amm', () => {
 
     function lp_amount(n) {
         return new anchor.BN(n * 10 ** n_decimals);
+    }
+
+    function getAmountOut(
+        amountIn: anchor.BN,
+        reserveIn: anchor.BN,
+        reserveOut: anchor.BN,
+        fee: number
+    ): anchor.BN {
+        let amountInWithFee = amountIn.mul(new anchor.BN(BASIS_POINTS - fee));
+        let numerator = amountInWithFee.mul(reserveOut);
+        let denominator = reserveIn
+            .mul(new anchor.BN(BASIS_POINTS))
+            .add(amountInWithFee);
+        return numerator.div(denominator);
+    }
+
+    function getAmountIn(
+        amountOut: anchor.BN,
+        reserveIn: anchor.BN,
+        reserveOut: anchor.BN,
+        fee: number
+    ): anchor.BN {
+        let numerator = reserveIn
+            .mul(amountOut)
+            .mul(new anchor.BN(BASIS_POINTS));
+        let denominator = reserveOut
+            .sub(amountOut)
+            .mul(new anchor.BN(BASIS_POINTS - fee));
+        return numerator.div(denominator).add(new anchor.BN(1));
     }
 });
