@@ -14,4 +14,12 @@ pub enum ErrorCode {
     InsufficientLiquidityMinted,
     #[msg("InsufficientLiquidityBurned")]
     InsufficientLiquidityBurned,
+    #[msg("InsufficientOutputAmount")]
+    InsufficientOutputAmount,
+    #[msg("InsufficientInputAmount")]
+    InsufficientInputAmount,
+    #[msg("InvalidLiquidity")]
+    InsufficientLiquidity,
+    #[msg("InvalidUserBalance")]
+    InvalidUserBalance,
 }

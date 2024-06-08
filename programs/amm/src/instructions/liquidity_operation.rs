@@ -74,10 +74,11 @@ pub fn add_liquidity(
     amount1_min: u64,
 ) -> Result<()> {
     let pool: &Box<Account<Pool>> = &ctx.accounts.pool;
+    let (reserve0, reserve1) = (ctx.accounts.vault0.amount, ctx.accounts.vault1.amount);
 
     let (amount0, amount1) = calculate_liquidity_amounts(
-        pool.reserve0,
-        pool.reserve1,
+        reserve0,
+        reserve1,
         amount0_desired,
         amount1_desired,
         amount0_min,
@@ -98,6 +99,8 @@ pub fn add_liquidity(
     mint_fee(
         &ctx.accounts.config,
         &ctx.accounts.pool,
+        reserve0,
+        reserve1,
         ctx.accounts.lp_mint.supply,
         mint_fee_ctx.with_signer(&[pool_sign]),
     )?;
@@ -110,9 +113,9 @@ pub fn add_liquidity(
             .to_num::<u64>();
     } else {
         liquidity = min(
-            amount0 * lp_mint.supply / pool.reserve0,
-            amount1 * lp_mint.supply / pool.reserve1,
-        )
+            amount0 as u128 * lp_mint.supply as u128 / reserve0 as u128,
+            amount1 as u128 * lp_mint.supply as u128 / reserve1 as u128,
+        ) as u64
     }
 
     require!(liquidity > 0, ErrorCode::InsufficientLiquidityMinted);
@@ -153,8 +156,11 @@ pub fn add_liquidity(
     )?;
 
     let pool: &mut Box<Account<Pool>> = &mut ctx.accounts.pool;
-    pool.add_liquidity(amount0, amount1)?;
-    pool.update_k_last();
+    ctx.accounts.vault0.reload()?;
+    ctx.accounts.vault1.reload()?;
+    let (reserve0, reserve1) = (ctx.accounts.vault0.amount, ctx.accounts.vault1.amount);
+
+    pool.update_k_last(reserve0, reserve1);
 
     Ok(())
 }
@@ -204,7 +210,7 @@ fn quote(amount0: u64, reserve0: u64, reserve1: u64) -> Result<u64> {
         ErrorCode::InsufficientReserves
     );
 
-    Ok(amount0 * reserve1 / reserve0)
+    Ok((amount0 as u128 * reserve1 as u128 / reserve0 as u128) as u64)
 }
 
 pub fn remove_liquidity(
@@ -214,6 +220,7 @@ pub fn remove_liquidity(
     amount1_min: u64,
 ) -> Result<()> {
     let pool: &Box<Account<Pool>> = &ctx.accounts.pool;
+    let (reserve0, reserve1) = (ctx.accounts.vault0.amount, ctx.accounts.vault1.amount);
 
     let pool_key = pool.key();
     let pool_sign = &[b"authority", pool_key.as_ref(), &[ctx.bumps.pool_authority]];
@@ -229,6 +236,8 @@ pub fn remove_liquidity(
     mint_fee(
         &ctx.accounts.config,
         &ctx.accounts.pool,
+        reserve0,
+        reserve1,
         ctx.accounts.lp_mint.supply,
         mint_fee_ctx.with_signer(&[pool_sign]),
     )?;
@@ -236,8 +245,8 @@ pub fn remove_liquidity(
     let (amount0, amount1) = calculate_removed_amounts(
         liquidity,
         ctx.accounts.lp_mint.supply,
-        pool.reserve0,
-        pool.reserve1,
+        reserve0,
+        reserve1,
         amount0_min,
         amount1_min,
     )?;
@@ -281,8 +290,11 @@ pub fn remove_liquidity(
     )?;
 
     let pool: &mut Box<Account<Pool>> = &mut ctx.accounts.pool;
-    pool.remove_liquidity(amount0, amount1)?;
-    pool.update_k_last();
+    ctx.accounts.vault0.reload()?;
+    ctx.accounts.vault1.reload()?;
+    let (reserve0, reserve1) = (ctx.accounts.vault0.amount, ctx.accounts.vault1.amount);
+
+    pool.update_k_last(reserve0, reserve1);
 
     Ok(())
 }

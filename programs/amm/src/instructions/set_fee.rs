@@ -35,13 +35,15 @@ pub fn set_fee(ctx: Context<SetFee>, new_fee: u64) -> Result<()> {
 pub fn mint_fee<'info>(
     _config: &Config,
     pool: &Pool,
+    reserve0: u64,
+    reserve1: u64,
     lp_supply: u64,
     mint_ctx: CpiContext<'_, '_, '_, 'info, MintTo<'info>>,
 ) -> Result<()> {
     let k_last = pool.k_last;
 
     if k_last != 0 {
-        let root_k: u128 = U128F0::from_num((pool.reserve0 as u128) * (pool.reserve1 as u128))
+        let root_k: u128 = U128F0::from_num((reserve0 as u128) * (reserve1 as u128))
             .sqrt()
             .to_num::<u128>();
         let root_k_last = U128F0::from_num(k_last).sqrt().to_num::<u128>();
